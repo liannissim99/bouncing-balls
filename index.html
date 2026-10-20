@@ -14,13 +14,13 @@
 <header><div class="brand"><span class="mark" aria-hidden="true"><i></i><i></i></span>playground<span style="color:#91a17d">.</span></div><div class="header-note">A little room for physics.</div></header>
 <section class="intro"><div><div class="eyebrow">SMALL EXPERIMENTS. ENDLESS POSSIBILITIES.</div><h1>Let things bounce.</h1><p>A few colorful balls. A little physics. See what happens.</p></div><div class="live"><i></i><span id="live">SIMULATION LIVE</span></div></section>
 <div class="workspace">
-<div class="stage" id="stage"><canvas id="canvas" tabindex="0" aria-label="Interactive bouncing ball playground. Click or tap to add a ball. Press Enter to add a ball in the center."></canvas><div class="stage-label"><span></span>YOUR LITTLE UNIVERSE</div><div class="hint"><b>＋</b> Click anywhere to add a ball</div></div>
+<div class="stage" id="stage"><canvas id="canvas" tabindex="0" aria-label="Interactive bouncing ball playground. Click or tap empty space to add a ball. Drag and release a ball to throw it. Sound starts after interaction. Press Enter to add a ball in the center."></canvas><div class="stage-label"><span></span>YOUR LITTLE UNIVERSE</div><div class="hint"><b>＋</b> Click to add · Drag a ball to throw</div></div>
 <aside class="panel" aria-label="Physics controls"><div class="panel-title">Make it your own <span class="tune" aria-hidden="true">☷</span></div>
 <div class="control"><label class="label" for="gravity">Gravity <output class="value" id="gravityValue">0.35</output></label><input id="gravity" type="range" min="0" max="1" step="0.01" value="0.35"><div class="ends"><span>Floaty</span><span>Heavy</span></div></div>
 <div class="control"><label class="label" for="bounce">Bounciness <output class="value" id="bounceValue">0.85</output></label><input id="bounce" type="range" min="0.3" max="1" step="0.01" value="0.85"><div class="ends"><span>Soft landing</span><span>Extra springy</span></div></div>
 <div class="control"><label class="label" for="size">Ball size <output class="value" id="sizeValue">28 px</output></label><input id="size" type="range" min="12" max="48" step="1" value="28"><div class="ends"><span>Tiny</span><span>Chunky</span></div></div>
 <div class="divider"></div><div><div class="color-label">Color mood</div><div class="palette" aria-label="Ball color"><button class="swatch rainbow" data-color="random" aria-label="Mixed colors" aria-pressed="true"></button><button class="swatch" style="background:#8fa983" data-color="#8fa983" aria-label="Sage" aria-pressed="false"></button><button class="swatch" style="background:#e2b66d" data-color="#e2b66d" aria-label="Golden" aria-pressed="false"></button><button class="swatch" style="background:#d88f82" data-color="#d88f82" aria-label="Coral" aria-pressed="false"></button><button class="swatch" style="background:#8faebb" data-color="#8faebb" aria-label="Sky" aria-pressed="false"></button><button class="swatch" style="background:#b09bc1" data-color="#b09bc1" aria-label="Lilac" aria-pressed="false"></button></div></div>
-<button id="pause" class="primary"><span aria-hidden="true">Ⅱ</span>Pause simulation</button><div class="actions"><button id="shuffle" class="secondary">↗ &nbsp; Give a shake</button><button id="clear" class="secondary">↺ &nbsp; Clear all</button></div><div class="tip"><b>A LITTLE TIP</b>Try turning gravity all the way down.<br>Even balls need a little space to float.</div>
+<button id="pause" class="primary"><span aria-hidden="true">Ⅱ</span>Pause simulation</button><div class="actions"><button id="shuffle" class="secondary">↗ &nbsp; Give a shake</button><button id="clear" class="secondary">↺ &nbsp; Clear all</button></div><div class="tip"><b>A LITTLE TIP</b>Try turning gravity all the way down.<br>Drag and throw a ball to hear it chime.</div>
 </aside></div>
 <div class="stats"><div class="stats-left"><span><strong id="count">0</strong> balls in motion</span><span>∞ possibilities</span></div><span class="shortcut"><span class="key">SPACE</span> to pause &nbsp; <span class="key">C</span> to clear</span></div>
 <footer><span>Made for the joy of doing nothing in particular.</span><span>NO RULES. JUST PLAY.</span></footer>
@@ -31,26 +31,88 @@ const canvas=document.getElementById('canvas'),ctx=canvas.getContext('2d'),stage
 const controls={gravity:document.getElementById('gravity'),bounce:document.getElementById('bounce'),size:document.getElementById('size')};
 const colors=['#8fa983','#e2b66d','#d88f82','#8faebb','#b09bc1'];
 let balls=[],width=1,height=1,paused=matchMedia('(prefers-reduced-motion: reduce)').matches,mood='random',last=0,accumulator=0;
+let audioContext=null,masterGain=null,drag=null;
+function unlockAudio(){
+  const AudioContext=window.AudioContext||window.webkitAudioContext;
+  if(!AudioContext)return;
+  try{
+    if(!audioContext){audioContext=new AudioContext();masterGain=audioContext.createGain();masterGain.gain.value=.22;masterGain.connect(audioContext.destination);}
+    if(audioContext.state==='suspended')audioContext.resume().catch(()=>{});
+  }catch{/* Audio is optional when the browser cannot provide it. */}
+}
+function chime(ball,speed){
+  // Ignore resting contact and limit repeated notes from the same ball.
+  if(!audioContext||audioContext.state!=='running'||speed<22)return;
+  const now=audioContext.currentTime;
+  if(now-(ball.lastTone??-Infinity)<.055)return;
+  ball.lastTone=now;
+  const oscillator=audioContext.createOscillator(),gain=audioContext.createGain();
+  oscillator.type='sine';
+  oscillator.frequency.setValueAtTime(900*Math.pow(12/ball.r,.75),now);
+  gain.gain.setValueAtTime(0,now);
+  gain.gain.linearRampToValueAtTime(Math.min(.14,speed/4000),now+.003);
+  gain.gain.exponentialRampToValueAtTime(.0001,now+.14);
+  oscillator.connect(gain);gain.connect(masterGain);
+  oscillator.start(now);oscillator.stop(now+.15);
+  oscillator.onended=()=>{oscillator.disconnect();gain.disconnect();};
+}
 const random=(a,b)=>a+Math.random()*(b-a);
 function count(){document.getElementById('count').textContent=balls.length;}
 function resize(){const rect=stage.getBoundingClientRect();width=rect.width;height=rect.height;const dpr=Math.min(devicePixelRatio||1,2);canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);for(const b of balls){b.x=Math.max(b.r,Math.min(width-b.r,b.x));b.y=Math.max(b.r,Math.min(height-b.r,b.y));}draw();}
 function addBall(x,y,r=Number(controls.size.value),color){if(balls.length>=150)return; r=Math.min(r,width/2,height/2);balls.push({x:Math.max(r,Math.min(width-r,x)),y:Math.max(r,Math.min(height-r,y)),r,vx:random(-190,190),vy:random(-230,-50),color:color||(mood==='random'?colors[Math.floor(Math.random()*colors.length)]:mood)});count();if(paused)draw();}
 function step(dt){const gravity=Number(controls.gravity.value)*1500,e=Number(controls.bounce.value);
-for(const b of balls){b.vy+=gravity*dt;b.x+=b.vx*dt;b.y+=b.vy*dt;if(b.x<b.r){b.x=b.r;b.vx=Math.abs(b.vx)*e;}if(b.x>width-b.r){b.x=width-b.r;b.vx=-Math.abs(b.vx)*e;}if(b.y<b.r){b.y=b.r;b.vy=Math.abs(b.vy)*e;}if(b.y>height-b.r){b.y=height-b.r;b.vy=-Math.abs(b.vy)*e;if(Math.abs(b.vy)<gravity*dt*1.5)b.vy=0;}}
-for(let i=0;i<balls.length;i++)for(let j=i+1;j<balls.length;j++){const a=balls[i],b=balls[j];let dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy),sum=a.r+b.r;if(d>=sum)continue;if(d<.001){dx=1;dy=0;d=1;}const nx=dx/d,ny=dy/d,ia=1/(a.r*a.r),ib=1/(b.r*b.r),overlap=sum-d;a.x-=nx*overlap*ia/(ia+ib);a.y-=ny*overlap*ia/(ia+ib);b.x+=nx*overlap*ib/(ia+ib);b.y+=ny*overlap*ib/(ia+ib);const velocity=(b.vx-a.vx)*nx+(b.vy-a.vy)*ny;if(velocity<0){const impulse=-(1+e)*velocity/(ia+ib);a.vx-=impulse*ia*nx;a.vy-=impulse*ia*ny;b.vx+=impulse*ib*nx;b.vy+=impulse*ib*ny;}}
+for(const b of balls){if(drag?.ball===b)continue;b.vy+=gravity*dt;b.x+=b.vx*dt;b.y+=b.vy*dt;if(b.x<b.r){chime(b,Math.abs(b.vx));b.x=b.r;b.vx=Math.abs(b.vx)*e;}if(b.x>width-b.r){chime(b,Math.abs(b.vx));b.x=width-b.r;b.vx=-Math.abs(b.vx)*e;}if(b.y<b.r){chime(b,Math.abs(b.vy));b.y=b.r;b.vy=Math.abs(b.vy)*e;}if(b.y>height-b.r){chime(b,Math.abs(b.vy));b.y=height-b.r;b.vy=-Math.abs(b.vy)*e;if(Math.abs(b.vy)<gravity*dt*1.5)b.vy=0;}}
+for(let i=0;i<balls.length;i++)for(let j=i+1;j<balls.length;j++){const a=balls[i],b=balls[j];let dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy),sum=a.r+b.r;if(d>=sum)continue;if(d<.001){dx=1;dy=0;d=1;}const nx=dx/d,ny=dy/d,ia=drag?.ball===a?0:1/(a.r*a.r),ib=drag?.ball===b?0:1/(b.r*b.r),overlap=sum-d;a.x-=nx*overlap*ia/(ia+ib);a.y-=ny*overlap*ia/(ia+ib);b.x+=nx*overlap*ib/(ia+ib);b.y+=ny*overlap*ib/(ia+ib);const velocity=(b.vx-a.vx)*nx+(b.vy-a.vy)*ny;if(velocity<0){chime(a,-velocity);chime(b,-velocity);const impulse=-(1+e)*velocity/(ia+ib);a.vx-=impulse*ia*nx;a.vy-=impulse*ia*ny;b.vx+=impulse*ib*nx;b.vy+=impulse*ib*ny;}}
 for(const b of balls){b.x=Math.max(b.r,Math.min(width-b.r,b.x));b.y=Math.max(b.r,Math.min(height-b.r,b.y));}}
 function draw(){ctx.clearRect(0,0,width,height);for(const b of balls){ctx.save();ctx.shadowColor='#35432920';ctx.shadowBlur=14;ctx.shadowOffsetY=7;const fill=ctx.createRadialGradient(b.x-b.r*.35,b.y-b.r*.4,b.r*.05,b.x,b.y,b.r*1.1);fill.addColorStop(0,b.color);fill.addColorStop(1,b.color);ctx.fillStyle=fill;ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,Math.PI*2);ctx.fill();ctx.shadowColor='transparent';const sheen=ctx.createRadialGradient(b.x-b.r*.35,b.y-b.r*.4,0,b.x-b.r*.2,b.y-b.r*.2,b.r*1.35);sheen.addColorStop(0,'#ffffff45');sheen.addColorStop(.6,'#ffffff00');sheen.addColorStop(1,'#00000012');ctx.fillStyle=sheen;ctx.fill();ctx.restore();}}
 function frame(time){const delta=last?Math.min((time-last)/1000,.05):0;last=time;if(!paused){accumulator+=delta;while(accumulator>=1/120){step(1/120);accumulator-=1/120;}draw();}requestAnimationFrame(frame);}
 function updatePause(){document.getElementById('pause').innerHTML=paused?'<span aria-hidden="true">▶</span>Resume simulation':'<span aria-hidden="true">Ⅱ</span>Pause simulation';document.getElementById('pause').setAttribute('aria-pressed',String(paused));document.getElementById('live').textContent=paused?'SIMULATION PAUSED':'SIMULATION LIVE';}
 function togglePause(){paused=!paused;accumulator=0;updatePause();}
-function clear(){balls=[];count();draw();}
-canvas.addEventListener('pointerdown',event=>{if(event.button!==0)return;const rect=canvas.getBoundingClientRect();addBall(event.clientX-rect.left,event.clientY-rect.top);});
+function clear(){if(drag)endDrag(null,true);balls=[];count();draw();}
+function pointerPosition(event){const rect=canvas.getBoundingClientRect();return{x:(event.clientX-rect.left)*width/rect.width,y:(event.clientY-rect.top)*height/rect.height};}
+function moveDrag(event){
+  if(!drag||event.pointerId!==drag.pointerId)return;
+  const p=pointerPosition(event),b=drag.ball,time=performance.now();
+  b.x=Math.max(b.r,Math.min(width-b.r,p.x-drag.offsetX));
+  b.y=Math.max(b.r,Math.min(height-b.r,p.y-drag.offsetY));
+  drag.samples.push({x:b.x,y:b.y,time});
+  drag.samples=drag.samples.filter(sample=>time-sample.time<=100);
+  const first=drag.samples[0],elapsed=(time-first.time)/1000;
+  b.vx=elapsed>0?(b.x-first.x)/elapsed:0;b.vy=elapsed>0?(b.y-first.y)/elapsed:0;
+  draw();
+}
+function endDrag(event,cancelled=false){
+  if(!drag||(event&&event.pointerId!==drag.pointerId))return;
+  if(event&&!cancelled)moveDrag(event);
+  const {ball,pointerId}=drag;
+  if(cancelled){ball.vx=0;ball.vy=0;}
+  const speed=Math.hypot(ball.vx,ball.vy);
+  if(speed>1800){ball.vx*=1800/speed;ball.vy*=1800/speed;}
+  drag=null;canvas.style.cursor='crosshair';
+  if(canvas.hasPointerCapture(pointerId))canvas.releasePointerCapture(pointerId);
+}
+canvas.addEventListener('pointerdown',event=>{
+  if(event.button!==0||drag)return;
+  unlockAudio();
+  const p=pointerPosition(event),ball=[...balls].reverse().find(b=>Math.hypot(b.x-p.x,b.y-p.y)<=b.r);
+  if(!ball){addBall(p.x,p.y);return;}
+  event.preventDefault();canvas.focus();canvas.setPointerCapture(event.pointerId);
+  ball.vx=0;ball.vy=0;
+  drag={ball,pointerId:event.pointerId,offsetX:p.x-ball.x,offsetY:p.y-ball.y,samples:[{x:ball.x,y:ball.y,time:performance.now()}]};
+  canvas.style.cursor='grabbing';
+});
+canvas.addEventListener('pointermove',moveDrag);
+canvas.addEventListener('pointerup',event=>endDrag(event));
+canvas.addEventListener('pointercancel',event=>endDrag(event,true));
+canvas.addEventListener('lostpointercapture',event=>endDrag(event,true));
+document.addEventListener('pointerdown',unlockAudio);
+document.addEventListener('keydown',unlockAudio);
 canvas.addEventListener('keydown',event=>{if(event.code==='Enter'){event.preventDefault();addBall(width/2,height/3);}});
 for(const [name,input]of Object.entries(controls)){input.addEventListener('input',()=>{document.getElementById(name+'Value').textContent=name==='size'?input.value+' px':Number(input.value).toFixed(2);});}
 document.querySelectorAll('.swatch').forEach(button=>button.addEventListener('click',()=>{mood=button.dataset.color;document.querySelectorAll('.swatch').forEach(s=>s.setAttribute('aria-pressed',String(s===button)));}));
 document.getElementById('pause').addEventListener('click',togglePause);document.getElementById('clear').addEventListener('click',clear);document.getElementById('shuffle').addEventListener('click',()=>{for(const b of balls){b.vx=random(-400,400);b.vy=random(-650,-250);}if(paused){paused=false;updatePause();}});
 document.addEventListener('keydown',event=>{if(/INPUT|BUTTON|TEXTAREA|SELECT/.test(event.target.tagName)||event.ctrlKey||event.metaKey||event.altKey)return;if(event.code==='Space'){event.preventDefault();togglePause();}if(event.code==='KeyC')clear();});
-document.addEventListener('visibilitychange',()=>{last=0;accumulator=0;});
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&drag)endDrag(null,true);last=0;accumulator=0;});
 new ResizeObserver(resize).observe(stage);resize();
 [[.15,.23,34],[.34,.48,25],[.52,.19,42],[.73,.38,29],[.86,.16,21],[.25,.74,39],[.63,.72,32]].forEach(([x,y,r],i)=>addBall(width*x,height*y,r,colors[i%colors.length]));updatePause();draw();requestAnimationFrame(frame);
 </script>
